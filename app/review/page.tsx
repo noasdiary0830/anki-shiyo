@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { GeneratedCard, DeckConfig, AnkiNote } from "@/types";
 import CardPreview from "@/components/CardPreview";
@@ -25,6 +25,12 @@ export default function ReviewPage() {
   const [ankiStatus, setAnkiStatus] = useState<"checking" | "ok" | "error">("checking");
   const [registering, setRegistering] = useState(false);
   const [ankiError, setAnkiError] = useState("");
+  const [supplementProgress, setSupplementProgress] = useState<{
+    done: number;
+    total: number;
+    running: boolean;
+  }>({ done: 0, total: 0, running: false });
+  const abortRef = useRef(false);
 
   useEffect(() => {
     const rawCards = sessionStorage.getItem("generatedCards");
@@ -39,14 +45,48 @@ export default function ReviewPage() {
     setUnitName(unit);
     setDeckConfig({ mode: "new", deckName: unit, tags: [unit] });
 
-    // Check AnkiConnect
     checkAnkiConnect().then((ok) => {
       setAnkiStatus(ok ? "ok" : "error");
-      if (ok) {
-        getDeckNames().then(setExistingDecks).catch(() => {});
-      }
+      if (ok) getDeckNames().then(setExistingDecks).catch(() => {});
     });
-  }, [router]);
+
+    // Auto-start supplement fetching
+    fetchSupplements(parsed);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const fetchSupplements = useCallback(async (initialCards: GeneratedCard[]) => {
+    abortRef.current = false;
+    setSupplementProgress({ done: 0, total: initialCards.length, running: true });
+
+    for (let i = 0; i < initialCards.length; i++) {
+      if (abortRef.current) break;
+      const card = initialCards[i];
+
+      try {
+        const res = await fetch("/api/supplement", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ front: card.front, back: card.back }),
+        });
+        const data = await res.json();
+
+        if (data.supplement) {
+          setCards((prev) =>
+            prev.map((c) =>
+              c.id === card.id ? { ...c, back: c.back + data.supplement } : c
+            )
+          );
+        }
+      } catch {
+        // silently skip on error
+      }
+
+      setSupplementProgress((prev) => ({ ...prev, done: i + 1 }));
+    }
+
+    setSupplementProgress((prev) => ({ ...prev, running: false }));
+  }, []);
 
   const toggleCard = (id: string) => {
     setCards((prev) =>
@@ -65,6 +105,9 @@ export default function ReviewPage() {
       alert("登録する問題を選択してください");
       return;
     }
+
+    // Stop supplement fetching
+    abortRef.current = true;
 
     setRegistering(true);
     setAnkiError("");
@@ -90,11 +133,7 @@ export default function ReviewPage() {
           const filename = `anki-shiyo-${card.id}.${ext}`;
           note.fields.Front = `<img src="${filename}"><br>${card.front}`;
           note.picture = [
-            {
-              data: card.imageBase64,
-              filename,
-              fields: ["Front"],
-            },
+            { data: card.imageBase64, filename, fields: ["Front"] },
           ];
         }
 
@@ -135,19 +174,48 @@ export default function ReviewPage() {
           </div>
           <div className="flex gap-2">
             <button
-              onClick={() => setCards((prev) => prev.map((c) => ({ ...c, selected: true })))}
+              onClick={() =>
+                setCards((prev) => prev.map((c) => ({ ...c, selected: true })))
+              }
               className="text-xs border rounded-lg px-3 py-1.5 hover:bg-gray-100"
             >
               全選択
             </button>
             <button
-              onClick={() => setCards((prev) => prev.map((c) => ({ ...c, selected: false })))}
+              onClick={() =>
+                setCards((prev) => prev.map((c) => ({ ...c, selected: false })))
+              }
               className="text-xs border rounded-lg px-3 py-1.5 hover:bg-gray-100"
             >
               全解除
             </button>
           </div>
         </div>
+
+        {/* Supplement progress */}
+        {supplementProgress.running && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs text-blue-700">
+                補足解説をWeb検索中... ({supplementProgress.done}/{supplementProgress.total})
+              </span>
+              <button
+                onClick={() => { abortRef.current = true; setSupplementProgress(p => ({ ...p, running: false })); }}
+                className="text-xs text-blue-500 hover:underline"
+              >
+                スキップ
+              </button>
+            </div>
+            <div className="w-full bg-blue-200 rounded-full h-1.5">
+              <div
+                className="bg-blue-500 h-1.5 rounded-full transition-all"
+                style={{
+                  width: `${(supplementProgress.done / supplementProgress.total) * 100}%`,
+                }}
+              />
+            </div>
+          </div>
+        )}
 
         {/* AnkiConnect status */}
         {ankiStatus === "error" && (
@@ -186,9 +254,7 @@ export default function ReviewPage() {
           <button
             onClick={handleRegister}
             disabled={
-              registering ||
-              selectedCards.length === 0 ||
-              ankiStatus !== "ok"
+              registering || selectedCards.length === 0 || ankiStatus !== "ok"
             }
             className="bg-blue-600 text-white px-6 py-2.5 rounded-xl font-semibold text-sm hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >

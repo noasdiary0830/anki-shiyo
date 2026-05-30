@@ -2,6 +2,9 @@
 
 import { useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
+import { GeneratedCard } from "@/types";
+
+type Phase = "idle" | "generating" | "error";
 
 export default function UploadPage() {
   const router = useRouter();
@@ -9,21 +12,21 @@ export default function UploadPage() {
   const [unitName, setUnitName] = useState("");
   const [targetCount, setTargetCount] = useState(100);
   const [dragging, setDragging] = useState(false);
+  const [phase, setPhase] = useState<Phase>("idle");
+  const [progress, setProgress] = useState(0);
+  const [statusMsg, setStatusMsg] = useState("");
   const [error, setError] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const handleFile = useCallback(
-    (f: File) => {
-      if (f.type !== "application/pdf") {
-        setError("PDFファイルを選択してください");
-        return;
-      }
-      setFile(f);
-      setError("");
-      setUnitName((prev) => prev || f.name.replace(/\.pdf$/i, ""));
-    },
-    []
-  );
+  const handleFile = useCallback((f: File) => {
+    if (f.type !== "application/pdf") {
+      setError("PDFファイルを選択してください");
+      return;
+    }
+    setFile(f);
+    setError("");
+    setUnitName((prev) => prev || f.name.replace(/\.pdf$/i, ""));
+  }, []);
 
   const onDrop = useCallback(
     (e: React.DragEvent) => {
@@ -42,18 +45,57 @@ export default function UploadPage() {
       return;
     }
 
-    const buffer = await file.arrayBuffer();
-    const base64 = btoa(
-      new Uint8Array(buffer).reduce((d, b) => d + String.fromCharCode(b), "")
-    );
+    setPhase("generating");
+    setProgress(10);
+    setStatusMsg("PDFをサーバーに送信中...");
+    setError("");
 
-    sessionStorage.setItem(
-      "pendingGeneration",
-      JSON.stringify({ pdfBase64: base64, fileName: file.name, unitName, targetCount })
-    );
+    try {
+      const formData = new FormData();
+      formData.append("pdf", file);
+      formData.append("unitName", unitName || file.name.replace(/\.pdf$/i, ""));
+      formData.append("targetCount", String(targetCount));
 
-    router.push("/generating");
+      setProgress(25);
+      setStatusMsg("Claude AIが問題を生成中...");
+
+      // Animate progress while waiting
+      const interval = setInterval(() => {
+        setProgress((prev) => Math.min(prev + 3, 88));
+        setStatusMsg((prev) =>
+          prev.includes("生成中") ? "テキストを解析・問題を生成中..." : "Claude AIが問題を生成中..."
+        );
+      }, 2000);
+
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        body: formData,
+      });
+
+      clearInterval(interval);
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "生成に失敗しました");
+      }
+
+      const data = await res.json();
+      const cards: GeneratedCard[] = data.cards;
+
+      setProgress(100);
+      setStatusMsg(`${cards.length}問を生成しました！`);
+
+      sessionStorage.setItem("generatedCards", JSON.stringify(cards));
+      sessionStorage.setItem("unitName", unitName || file.name.replace(/\.pdf$/i, ""));
+
+      setTimeout(() => router.push("/review"), 600);
+    } catch (err) {
+      setPhase("error");
+      setError(err instanceof Error ? err.message : "エラーが発生しました");
+    }
   };
+
+  const isGenerating = phase === "generating";
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
@@ -65,89 +107,107 @@ export default function UploadPage() {
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div
-            className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${
-              dragging
-                ? "border-blue-500 bg-blue-50"
-                : file
-                ? "border-green-400 bg-green-50"
-                : "border-gray-300 hover:border-blue-400 hover:bg-gray-50"
-            }`}
-            onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={onDrop}
-            onClick={() => inputRef.current?.click()}
-          >
-            <input
-              ref={inputRef}
-              type="file"
-              accept=".pdf"
-              className="hidden"
-              onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
-            />
-            {file ? (
-              <div>
-                <div className="text-4xl mb-2">📄</div>
-                <p className="font-medium text-green-700">{file.name}</p>
-                <p className="text-xs text-gray-500 mt-1">
-                  {(file.size / 1024 / 1024).toFixed(2)} MB
-                </p>
-              </div>
-            ) : (
-              <div>
-                <div className="text-4xl mb-2">📁</div>
-                <p className="text-gray-600">PDFをドラッグ＆ドロップ</p>
-                <p className="text-xs text-gray-400 mt-1">またはクリックして選択</p>
-              </div>
-            )}
-          </div>
-
-          {error && (
-            <p className="text-red-600 text-sm text-center">{error}</p>
-          )}
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              単元名（デッキ名・タグに使用）
-            </label>
-            <input
-              type="text"
-              value={unitName}
-              onChange={(e) => setUnitName(e.target.value)}
-              placeholder="例: 循環器内科 / 心不全"
-              className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              生成問題数:{" "}
-              <span className="text-blue-600 font-semibold">{targetCount}問</span>
-            </label>
-            <input
-              type="range"
-              min={10}
-              max={200}
-              step={10}
-              value={targetCount}
-              onChange={(e) => setTargetCount(parseInt(e.target.value))}
-              className="w-full accent-blue-600"
-            />
-            <div className="flex justify-between text-xs text-gray-400 mt-1">
-              <span>10問</span>
-              <span>200問（最大）</span>
+        {isGenerating ? (
+          <div className="space-y-4 py-4">
+            <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+              <div
+                className="bg-blue-600 h-3 rounded-full transition-all duration-700"
+                style={{ width: `${progress}%` }}
+              />
             </div>
+            <p className="text-sm text-center text-gray-600">{statusMsg}</p>
+            <p className="text-xs text-center text-gray-400">
+              ※ PDFのサイズによって1〜2分かかる場合があります
+            </p>
           </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-6">
+            {/* Drop zone */}
+            <div
+              className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${
+                dragging
+                  ? "border-blue-500 bg-blue-50"
+                  : file
+                  ? "border-green-400 bg-green-50"
+                  : "border-gray-300 hover:border-blue-400 hover:bg-gray-50"
+              }`}
+              onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+              onDragLeave={() => setDragging(false)}
+              onDrop={onDrop}
+              onClick={() => inputRef.current?.click()}
+            >
+              <input
+                ref={inputRef}
+                type="file"
+                accept=".pdf"
+                className="hidden"
+                onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
+              />
+              {file ? (
+                <div>
+                  <div className="text-4xl mb-2">📄</div>
+                  <p className="font-medium text-green-700">{file.name}</p>
+                  <p className="text-xs text-gray-500 mt-1">
+                    {(file.size / 1024 / 1024).toFixed(2)} MB
+                  </p>
+                </div>
+              ) : (
+                <div>
+                  <div className="text-4xl mb-2">📁</div>
+                  <p className="text-gray-600">PDFをドラッグ＆ドロップ</p>
+                  <p className="text-xs text-gray-400 mt-1">またはクリックして選択</p>
+                </div>
+              )}
+            </div>
 
-          <button
-            type="submit"
-            disabled={!file}
-            className="w-full bg-blue-600 text-white py-3 rounded-xl font-semibold text-sm hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            問題を生成する
-          </button>
-        </form>
+            {error && (
+              <p className="text-red-600 text-sm text-center">{error}</p>
+            )}
+
+            {/* Unit name */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                単元名（デッキ名・タグに使用）
+              </label>
+              <input
+                type="text"
+                value={unitName}
+                onChange={(e) => setUnitName(e.target.value)}
+                placeholder="例: 循環器内科 / 心不全"
+                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            {/* Target count */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                生成問題数:{" "}
+                <span className="text-blue-600 font-semibold">{targetCount}問</span>
+              </label>
+              <input
+                type="range"
+                min={10}
+                max={200}
+                step={10}
+                value={targetCount}
+                onChange={(e) => setTargetCount(parseInt(e.target.value))}
+                className="w-full accent-blue-600"
+              />
+              <div className="flex justify-between text-xs text-gray-400 mt-1">
+                <span>10問</span>
+                <span>200問（最大）</span>
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={!file}
+              className="w-full bg-blue-600 text-white py-3 rounded-xl font-semibold text-sm hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              問題を生成する
+            </button>
+          </form>
+        )}
       </div>
     </main>
   );

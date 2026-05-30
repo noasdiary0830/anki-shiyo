@@ -7,6 +7,7 @@ import { extractTextFromPDFClient } from "@/lib/pdf-client";
 
 type Phase = "idle" | "extracting" | "generating" | "error";
 
+
 export default function UploadPage() {
   const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
@@ -16,6 +17,7 @@ export default function UploadPage() {
   const [phase, setPhase] = useState<Phase>("idle");
   const [progress, setProgress] = useState(0);
   const [statusMsg, setStatusMsg] = useState("");
+  const [pageProgress, setPageProgress] = useState<{ current: number; total: number } | null>(null);
   const [error, setError] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -54,7 +56,11 @@ export default function UploadPage() {
       setProgress(10);
       setStatusMsg("PDFからテキストを抽出中...");
 
-      const text = await extractTextFromPDFClient(file);
+      const text = await extractTextFromPDFClient(file, (current, total) => {
+        setPageProgress({ current, total });
+        setProgress(Math.round((current / total) * 30) + 5);
+        setStatusMsg(`PDFからテキストを抽出中... (${current}/${total}ページ)`);
+      });
 
       if (!text || text.trim().length < 100) {
         throw new Error(
@@ -64,7 +70,8 @@ export default function UploadPage() {
 
       // Step 2: Send text to API
       setPhase("generating");
-      setProgress(35);
+      setPageProgress(null);
+      setProgress(40);
       setStatusMsg("Claude AIが問題を生成中...");
 
       const interval = setInterval(() => {
@@ -128,6 +135,14 @@ export default function UploadPage() {
               />
             </div>
             <p className="text-sm text-center text-gray-600">{statusMsg}</p>
+            {pageProgress && (
+              <div className="w-full bg-gray-100 rounded-full h-1.5">
+                <div
+                  className="bg-green-500 h-1.5 rounded-full transition-all duration-300"
+                  style={{ width: `${(pageProgress.current / pageProgress.total) * 100}%` }}
+                />
+              </div>
+            )}
             {phase === "generating" && (
               <p className="text-xs text-center text-gray-400">
                 ※ PDFの内容によって1〜2分かかる場合があります

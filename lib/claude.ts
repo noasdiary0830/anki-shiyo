@@ -1,6 +1,14 @@
 import Anthropic from "@anthropic-ai/sdk";
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+function getClient(): Anthropic {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      "ANTHROPIC_API_KEY が設定されていません。Vercelの Settings → Environment Variables で ANTHROPIC_API_KEY を Production 環境に設定し、再デプロイしてください。"
+    );
+  }
+  return new Anthropic({ apiKey });
+}
 
 export interface CardData {
   front: string;
@@ -13,6 +21,7 @@ export async function generateCards(
   unitName: string,
   targetCount: number
 ): Promise<CardData[]> {
+  const client = getClient();
   const message = await client.messages.create({
     model: "claude-sonnet-4-20250514",
     max_tokens: 8000,
@@ -60,6 +69,7 @@ export async function addWebSearchSupplement(
   back: string
 ): Promise<string> {
   try {
+    const client = getClient();
     const message = await client.messages.create({
       model: "claude-sonnet-4-20250514",
       max_tokens: 1000,

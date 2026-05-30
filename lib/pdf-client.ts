@@ -2,25 +2,49 @@ export async function extractTextFromPDFClient(
   file: File,
   onProgress?: (current: number, total: number) => void
 ): Promise<string> {
-  const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  let pdfjsLib: typeof import("pdfjs-dist/legacy/build/pdf.mjs");
+  try {
+    pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  } catch (e) {
+    throw new Error(
+      `[PDF抽出:ライブラリ読込] ${e instanceof Error ? e.message : String(e)}`
+    );
+  }
 
-  // Use the legacy worker served as a static asset from public/.
-  // This is the most reliable approach across Next.js / Turbopack / Safari:
-  // no bundler URL transformation needed, just a plain absolute path fetch.
-  const worker = new Worker("/pdf.worker.legacy.min.mjs", { type: "module" });
-  pdfjsLib.GlobalWorkerOptions.workerPort = worker;
+  // Try to spin up a module worker. If the browser (e.g. older Safari)
+  // rejects it, fall back to running pdf.js on the main thread.
+  try {
+    const worker = new Worker("/pdf.worker.legacy.min.mjs", { type: "module" });
+    pdfjsLib.GlobalWorkerOptions.workerPort = worker;
+  } catch {
+    // Fake-worker / main-thread mode. Still needs a workerSrc value set.
+    pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.legacy.min.mjs";
+  }
 
-  const arrayBuffer = await file.arrayBuffer();
+  let arrayBuffer: ArrayBuffer;
+  try {
+    arrayBuffer = await file.arrayBuffer();
+  } catch (e) {
+    throw new Error(
+      `[PDF抽出:ファイル読込] ${e instanceof Error ? e.message : String(e)}`
+    );
+  }
 
-  const loadingTask = pdfjsLib.getDocument({
-    data: new Uint8Array(arrayBuffer),
-    useSystemFonts: true,
-    disableFontFace: true,
-  });
+  let pdf;
+  try {
+    const loadingTask = pdfjsLib.getDocument({
+      data: new Uint8Array(arrayBuffer),
+      useSystemFonts: true,
+      disableFontFace: true,
+    });
+    pdf = await loadingTask.promise;
+  } catch (e) {
+    throw new Error(
+      `[PDF抽出:文書解析] ${e instanceof Error ? e.message : String(e)}`
+    );
+  }
 
-  const pdf = await loadingTask.promise;
   const total = pdf.numPages;
-
   const texts: string[] = [];
   try {
     for (let i = 1; i <= total; i++) {
@@ -32,8 +56,10 @@ export async function extractTextFromPDFClient(
         .join(" ");
       texts.push(pageText);
     }
-  } finally {
-    worker.terminate();
+  } catch (e) {
+    throw new Error(
+      `[PDF抽出:テキスト取得] ${e instanceof Error ? e.message : String(e)}`
+    );
   }
 
   return texts.join("\n");

@@ -2,15 +2,12 @@ export async function extractTextFromPDFClient(
   file: File,
   onProgress?: (current: number, total: number) => void
 ): Promise<string> {
-  // Use the legacy build for maximum browser compatibility (avoids
-  // bleeding-edge JS features like Promise.try used by the modern build).
   const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
 
-  // Let the bundler resolve and bundle the worker, then run it via workerPort.
-  const worker = new Worker(
-    new URL("pdfjs-dist/legacy/build/pdf.worker.min.mjs", import.meta.url),
-    { type: "module" }
-  );
+  // Use the legacy worker served as a static asset from public/.
+  // This is the most reliable approach across Next.js / Turbopack / Safari:
+  // no bundler URL transformation needed, just a plain absolute path fetch.
+  const worker = new Worker("/pdf.worker.legacy.min.mjs", { type: "module" });
   pdfjsLib.GlobalWorkerOptions.workerPort = worker;
 
   const arrayBuffer = await file.arrayBuffer();

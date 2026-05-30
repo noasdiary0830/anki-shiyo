@@ -3,8 +3,9 @@
 import { useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { GeneratedCard } from "@/types";
+import { extractTextFromPDFClient } from "@/lib/pdf-client";
 
-type Phase = "idle" | "generating" | "error";
+type Phase = "idle" | "extracting" | "generating" | "error";
 
 export default function UploadPage() {
   const router = useRouter();
@@ -45,31 +46,39 @@ export default function UploadPage() {
       return;
     }
 
-    setPhase("generating");
-    setProgress(10);
-    setStatusMsg("PDFをサーバーに送信中...");
     setError("");
 
     try {
-      const formData = new FormData();
-      formData.append("pdf", file);
-      formData.append("unitName", unitName || file.name.replace(/\.pdf$/i, ""));
-      formData.append("targetCount", String(targetCount));
+      // Step 1: Extract text in the browser (no size limit)
+      setPhase("extracting");
+      setProgress(10);
+      setStatusMsg("PDFからテキストを抽出中...");
 
-      setProgress(25);
+      const text = await extractTextFromPDFClient(file);
+
+      if (!text || text.trim().length < 100) {
+        throw new Error(
+          "PDFからテキストを抽出できませんでした。スキャンPDF（画像のみ）は非対応です。"
+        );
+      }
+
+      // Step 2: Send text to API
+      setPhase("generating");
+      setProgress(35);
       setStatusMsg("Claude AIが問題を生成中...");
 
-      // Animate progress while waiting
       const interval = setInterval(() => {
         setProgress((prev) => Math.min(prev + 3, 88));
-        setStatusMsg((prev) =>
-          prev.includes("生成中") ? "テキストを解析・問題を生成中..." : "Claude AIが問題を生成中..."
-        );
       }, 2000);
 
       const res = await fetch("/api/generate", {
         method: "POST",
-        body: formData,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: text.slice(0, 100000), // ~100k chars is plenty for Claude
+          unitName: unitName || file.name.replace(/\.pdf$/i, ""),
+          targetCount,
+        }),
       });
 
       clearInterval(interval);
@@ -86,7 +95,10 @@ export default function UploadPage() {
       setStatusMsg(`${cards.length}問を生成しました！`);
 
       sessionStorage.setItem("generatedCards", JSON.stringify(cards));
-      sessionStorage.setItem("unitName", unitName || file.name.replace(/\.pdf$/i, ""));
+      sessionStorage.setItem(
+        "unitName",
+        unitName || file.name.replace(/\.pdf$/i, "")
+      );
 
       setTimeout(() => router.push("/review"), 600);
     } catch (err) {
@@ -95,7 +107,7 @@ export default function UploadPage() {
     }
   };
 
-  const isGenerating = phase === "generating";
+  const isLoading = phase === "extracting" || phase === "generating";
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
@@ -107,7 +119,7 @@ export default function UploadPage() {
           </p>
         </div>
 
-        {isGenerating ? (
+        {isLoading ? (
           <div className="space-y-4 py-4">
             <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
               <div
@@ -116,9 +128,11 @@ export default function UploadPage() {
               />
             </div>
             <p className="text-sm text-center text-gray-600">{statusMsg}</p>
-            <p className="text-xs text-center text-gray-400">
-              ※ PDFのサイズによって1〜2分かかる場合があります
-            </p>
+            {phase === "generating" && (
+              <p className="text-xs text-center text-gray-400">
+                ※ PDFの内容によって1〜2分かかる場合があります
+              </p>
+            )}
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-6">
@@ -131,7 +145,10 @@ export default function UploadPage() {
                   ? "border-green-400 bg-green-50"
                   : "border-gray-300 hover:border-blue-400 hover:bg-gray-50"
               }`}
-              onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragging(true);
+              }}
               onDragLeave={() => setDragging(false)}
               onDrop={onDrop}
               onClick={() => inputRef.current?.click()}
@@ -141,21 +158,26 @@ export default function UploadPage() {
                 type="file"
                 accept=".pdf"
                 className="hidden"
-                onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
+                onChange={(e) =>
+                  e.target.files?.[0] && handleFile(e.target.files[0])
+                }
               />
               {file ? (
                 <div>
                   <div className="text-4xl mb-2">📄</div>
                   <p className="font-medium text-green-700">{file.name}</p>
                   <p className="text-xs text-gray-500 mt-1">
-                    {(file.size / 1024 / 1024).toFixed(2)} MB
+                    {(file.size / 1024 / 1024).toFixed(1)} MB &nbsp;·&nbsp;
+                    テキスト抽出はブラウザ内で行うためサイズ制限なし
                   </p>
                 </div>
               ) : (
                 <div>
                   <div className="text-4xl mb-2">📁</div>
                   <p className="text-gray-600">PDFをドラッグ＆ドロップ</p>
-                  <p className="text-xs text-gray-400 mt-1">またはクリックして選択</p>
+                  <p className="text-xs text-gray-400 mt-1">
+                    またはクリックして選択（サイズ制限なし）
+                  </p>
                 </div>
               )}
             </div>
@@ -182,7 +204,9 @@ export default function UploadPage() {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 生成問題数:{" "}
-                <span className="text-blue-600 font-semibold">{targetCount}問</span>
+                <span className="text-blue-600 font-semibold">
+                  {targetCount}問
+                </span>
               </label>
               <input
                 type="range"

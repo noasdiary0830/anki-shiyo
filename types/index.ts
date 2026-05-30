@@ -24,10 +24,7 @@ export interface DeckConfig {
 export interface AnkiNote {
   deckName: string;
   modelName: string;
-  fields: {
-    Front: string;
-    Back: string;
-  };
+  fields: Record<string, string>;
   tags: string[];
   picture?: {
     data: string;

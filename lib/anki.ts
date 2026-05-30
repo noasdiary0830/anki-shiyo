@@ -28,25 +28,40 @@ export async function getModelNames(): Promise<string[]> {
   return ankiRequest("modelNames");
 }
 
-// Return the best available "Basic" model name for this Anki installation.
-export async function resolveBasicModel(): Promise<string> {
+export interface BasicModelInfo {
+  modelName: string;
+  frontField: string;
+  backField: string;
+}
+
+// Return the model name and actual field names for this Anki installation.
+// Japanese Anki uses "基本" with fields "表面"/"裏面" instead of "Basic"/"Front"/"Back".
+export async function resolveBasicModel(): Promise<BasicModelInfo> {
   const models: string[] = await getModelNames();
-  // Prefer exact matches first, then substring matches
+
   const candidates = ["Basic", "基本", "基礎"];
-  for (const c of candidates) {
-    if (models.includes(c)) return c;
+  const orderedModels = [
+    ...candidates.filter((c) => models.includes(c)),
+    ...models.filter((m) => !candidates.includes(m)),
+  ];
+
+  for (const modelName of orderedModels) {
+    const fields: string[] = await ankiRequest("modelFieldNames", { modelName });
+    // English field names
+    if (fields.includes("Front") && fields.includes("Back")) {
+      return { modelName, frontField: "Front", backField: "Back" };
+    }
+    // Japanese field names
+    if (fields.includes("表面") && fields.includes("裏面")) {
+      return { modelName, frontField: "表面", backField: "裏面" };
+    }
+    // Generic: use first two fields
+    if (fields.length >= 2) {
+      return { modelName, frontField: fields[0], backField: fields[1] };
+    }
   }
-  const partial = models.find(
-    (m) => m.toLowerCase().includes("basic") || m.includes("基本")
-  );
-  if (partial) return partial;
-  // Last resort: use first model that has Front/Back fields
-  for (const m of models) {
-    const fields: string[] = await ankiRequest("modelFieldNames", { modelName: m });
-    if (fields.includes("Front") && fields.includes("Back")) return m;
-    if (fields.includes("表面") && fields.includes("裏面")) return m;
-  }
-  return models[0];
+
+  return { modelName: models[0], frontField: "Front", backField: "Back" };
 }
 
 export async function createDeck(deckName: string): Promise<void> {

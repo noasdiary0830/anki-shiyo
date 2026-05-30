@@ -120,17 +120,17 @@ export default function ReviewPage() {
         await createDeck(deckConfig.deckName);
       }
 
-      // Resolve the correct model name for this Anki installation
-      // (Japanese Anki uses "基本" instead of "Basic")
-      const modelName = await resolveBasicModel();
+      // Resolve the correct model name and field names for this Anki installation
+      // (Japanese Anki uses "基本" with fields "表面"/"裏面" instead of "Basic"/"Front"/"Back")
+      const { modelName, frontField, backField } = await resolveBasicModel();
 
       const notes: AnkiNote[] = selectedCards.map((card) => {
         const note: AnkiNote = {
           deckName: deckConfig.deckName,
           modelName,
           fields: {
-            Front: card.front,
-            Back: card.back,
+            [frontField]: card.front,
+            [backField]: card.back,
           },
           tags: deckConfig.tags,
         };
@@ -138,9 +138,9 @@ export default function ReviewPage() {
         if (card.imageBase64 && card.imageMimeType) {
           const ext = card.imageMimeType.split("/")[1] || "png";
           const filename = `anki-shiyo-${card.id}.${ext}`;
-          note.fields.Front = `<img src="${filename}"><br>${card.front}`;
+          note.fields[frontField] = `<img src="${filename}"><br>${card.front}`;
           note.picture = [
-            { data: card.imageBase64, filename, fields: ["Front"] },
+            { data: card.imageBase64, filename, fields: [frontField] },
           ];
         }
 

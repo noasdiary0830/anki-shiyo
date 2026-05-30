@@ -1,5 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 
+const MODEL = "claude-sonnet-4-5";
+
 function getClient(): Anthropic {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
@@ -23,7 +25,7 @@ export async function generateCards(
 ): Promise<CardData[]> {
   const client = getClient();
   const message = await client.messages.create({
-    model: "claude-sonnet-4-20250514",
+    model: MODEL,
     max_tokens: 8000,
     messages: [
       {
@@ -71,7 +73,7 @@ export async function addWebSearchSupplement(
   try {
     const client = getClient();
     const message = await client.messages.create({
-      model: "claude-sonnet-4-20250514",
+      model: MODEL,
       max_tokens: 1000,
       tools: [
         {

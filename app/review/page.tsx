@@ -10,6 +10,7 @@ import {
   getDeckNames,
   createDeck,
   addNotes,
+  resolveBasicModel,
 } from "@/lib/anki";
 
 export default function ReviewPage() {
@@ -47,7 +48,9 @@ export default function ReviewPage() {
 
     checkAnkiConnect().then((ok) => {
       setAnkiStatus(ok ? "ok" : "error");
-      if (ok) getDeckNames().then(setExistingDecks).catch(() => {});
+      if (ok) {
+        getDeckNames().then(setExistingDecks).catch(() => {});
+      }
     });
 
     // Auto-start supplement fetching
@@ -117,10 +120,14 @@ export default function ReviewPage() {
         await createDeck(deckConfig.deckName);
       }
 
+      // Resolve the correct model name for this Anki installation
+      // (Japanese Anki uses "基本" instead of "Basic")
+      const modelName = await resolveBasicModel();
+
       const notes: AnkiNote[] = selectedCards.map((card) => {
         const note: AnkiNote = {
           deckName: deckConfig.deckName,
-          modelName: "Basic",
+          modelName,
           fields: {
             Front: card.front,
             Back: card.back,

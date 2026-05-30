@@ -24,6 +24,31 @@ export async function getDeckNames(): Promise<string[]> {
   return ankiRequest("deckNames");
 }
 
+export async function getModelNames(): Promise<string[]> {
+  return ankiRequest("modelNames");
+}
+
+// Return the best available "Basic" model name for this Anki installation.
+export async function resolveBasicModel(): Promise<string> {
+  const models: string[] = await getModelNames();
+  // Prefer exact matches first, then substring matches
+  const candidates = ["Basic", "基本", "基礎"];
+  for (const c of candidates) {
+    if (models.includes(c)) return c;
+  }
+  const partial = models.find(
+    (m) => m.toLowerCase().includes("basic") || m.includes("基本")
+  );
+  if (partial) return partial;
+  // Last resort: use first model that has Front/Back fields
+  for (const m of models) {
+    const fields: string[] = await ankiRequest("modelFieldNames", { modelName: m });
+    if (fields.includes("Front") && fields.includes("Back")) return m;
+    if (fields.includes("表面") && fields.includes("裏面")) return m;
+  }
+  return models[0];
+}
+
 export async function createDeck(deckName: string): Promise<void> {
   await ankiRequest("createDeck", { deck: deckName });
 }
